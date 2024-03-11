@@ -54,10 +54,20 @@ class TaskPayload(Schema):
             raise ValidationError("Name task too long!! max 1000 letters")
 
 
-class Filtration(Schema):
+class FiltrationProject(Schema):
     name = ValueField(required=False)
     id = fields.Integer(required=False)
     completed = fields.Boolean(required=False)
+
+
+class FiltrationTask(Schema):
+    title = ValueField(required=False)
+    name = ValueField(required=False)
+    action = fields.Boolean(required=False)
+    id = fields.Integer(required=False)
+    expiry = fields.DateTime(required=False)
+    date_completed = fields.DateTime(required=False, default=None)
+    created = fields.DateTime(required=False)
 
 
 class Pagination(Schema):
@@ -76,7 +86,7 @@ class Sort(Schema):
 
 
 class ParamProject(Schema):
-    filter = fields.Nested(Filtration(), only=("name", "id", "completed"))
+    filter = fields.Nested(FiltrationProject(), only=("name", "id", "completed"))
     pagination = fields.Nested(Pagination(), only=("page", "per_page"),
                                missing=Pagination().load({"page": 1, "per_page": 10}))
     sort = fields.Nested(Sort(), only=("sort_by", "order"), missing=Sort().load({"sort_by": "id", "order": "asc"}))
@@ -88,10 +98,13 @@ class ParamProject(Schema):
 
 
 class ParamTask(Schema):
-    title_task = fields.String(required=False)
-    name_task = fields.String(required=False)
-    action_task = fields.Boolean(required=False)
-    id = fields.Integer(required=False)
-    expiry_task = fields.DateTime(required=False)
-    date_completed = fields.DateTime(required=False, default=None)
-    created_task = fields.DateTime(required=False)
+    filter = fields.Nested(FiltrationTask(),
+                           only=("title", "name", "id", "date_completed", "action", "created", "expiry"))
+    pagination = fields.Nested(Pagination(), only=("page", "per_page"),
+                               missing=Pagination().load({"page": 1, "per_page": 10}))
+    sort = fields.Nested(Sort(), only=("sort_by", "order"), missing=Sort().load({"sort_by": "id", "order": "asc"}))
+
+    @validates_schema
+    def validate_sort(self, data, **kwargs):
+        if data["sort"]["order"] != "asc" and data["sort"]["order"] != "desc":
+            raise ValidationError("Can only be 'asc' or 'desc'")
