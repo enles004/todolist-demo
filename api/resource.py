@@ -31,6 +31,7 @@ class GroupResource(View):
             except ParserException as err:
                 raise ValidationError(f"{err}")
         result = self._schema_params().load(data)
+        print(result)
         return result
 
     def dispatch_request(self, **kwargs):

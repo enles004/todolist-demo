@@ -34,12 +34,12 @@ class Task(Base):
 
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
-    title_task = Column(String(10000), nullable=False)
-    name_task = Column(String(10000), nullable=False)
-    expiry_task = Column(DateTime, default=None)
-    action_task = Column(Boolean, default=False)
+    title = Column(String(10000), nullable=False)
+    name = Column(String(10000), nullable=False)
+    expiry = Column(DateTime, default=None)
+    action = Column(Boolean, default=False)
     date_completed = Column(DateTime, default=None)
-    created_task = Column(DateTime(timezone=True), default=func.now())
+    created = Column(DateTime(timezone=True), default=func.now())
 
 
 # many to many

@@ -6,6 +6,7 @@ from api.resource import GroupResource, ItemResource
 from app import cache
 from db.models import Project, Task
 from db.session import db_session
+from handlers.params import filtering, sorting
 from .middleware import check_permissions, g, jwt_required
 from .schemas import TaskPayload, ParamTask
 
@@ -30,9 +31,9 @@ class TasksGroup(GroupResource):
             now = datetime.now()
             date = datetime(now.year, now.month, now.day + 1)
         new_task = Task(project_id=path_params["id"],
-                        title_task=payload['title'],
-                        name_task=payload['name'],
-                        expiry_task=date)
+                        title=payload['title'],
+                        name=payload['name'],
+                        expiry=date)
 
         db_session.add(new_task)
         db_session.commit()
@@ -41,21 +42,35 @@ class TasksGroup(GroupResource):
     @jwt_required
     @check_permissions(["read"])
     def get(self, payload, path_params, query_params):
-        print('heh')
         project = db_session.query(Project).filter_by(user_id=g.user_id, id=path_params["id"]).first()
+        query = db_session.query(Task)
         if not project:
             return jsonify({"message": "no project"}), 404
         if query_params:
-            query_params["project_id"] = project.id
-            tasks = db_session.query(Task).filter_by(**query_params).all()
-            task_dump = ParamTask(many=True)
-            data = task_dump.dump(tasks)
-            return data, 200
+            # Pagination
+            page = query_params["pagination"]["page"]
+            per_page = query_params["pagination"]["per_page"]
+            offset = (page - 1) * per_page
 
-        tasks = db_session.query(Task).filter_by(project_id=project.id).all()
-        task_dump = ParamTask(many=True)
-        data = task_dump.dump(tasks)
-        return data, 200
+            # Filtering
+            query = query.filter_by(project_id=project.id)
+            if "filter" in query_params:
+                filter_params = query_params["filter"]
+                filtering(query=query, model=Task, data_filter_params=filter_params)
+
+            # Sorting
+            sort_params = query_params["sort"]
+            try:
+                query = sorting(query=query, data_sort_params=sort_params, model=Task)
+            except AttributeError:
+                return jsonify({"message": "invalid input attribute '{}'".format(sort_params["sort_by"])}), 400
+
+            # Result
+            total = query.count()
+            products = query.offset(offset).limit(per_page).all()
+            return {"data": [{"title": data.title, "name": data.name, "created": data.created, "id": data.id,
+                              "date_completed": data.date_completed, "action": data.action} for data in products],
+                    "meta": [{"page": page, "per_page": per_page, "total": total}]}, 200
 
 
 class TaskItem(ItemResource):
