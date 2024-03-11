@@ -1,2 +1,0 @@
-# todolist-app
-print("hehe")
