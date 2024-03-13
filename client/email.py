@@ -37,4 +37,4 @@ class MailSender:
         message.attach(part)
         server = self._get_server()
         server.sendmail(self._sender_email, email_to, message.as_string())
-        print("Da gui mail")
+        return "Da gui mail"

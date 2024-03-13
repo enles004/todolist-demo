@@ -4,14 +4,12 @@ from flask import jsonify
 
 from api.resource import GroupResource, ItemResource
 from app import cache
-from config import rabbitmq_config_project
 from db.models import Project, Task
 from db.session import db_session
 from handlers.params import filtering, sorting
-from services.connect_rabbitmq import RabbitMQ
 from .middleware import check_permissions, g, jwt_required
 from .schemas import ProjectPayload, ParamProject
-
+from tasks import send_mail_delete
 
 class ProjectGroup(GroupResource):
 
@@ -111,9 +109,6 @@ class ProjectItem(ItemResource):
         now = datetime.now()
         time = datetime(now.year, now.month, now.day, now.hour, now.minute, now.second)
         db_session.commit()
-        data = {"body": {"command_type": "send_mail_delete_project",
-                         "email": g.email, "username": g.username,
-                         "name": project.name, "deletion_date": str(time)},
-                "routing_key": "delete-project"}
-        RabbitMQ(**rabbitmq_config_project).publish(**data)
+        data = {"email": g.email, "username": g.username, "name": project.name, "deletion_date": str(time)}
+        send_mail_delete.delay(data)
         return jsonify({"message": "deleted"}), 200

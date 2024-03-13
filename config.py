@@ -26,3 +26,4 @@ smtp_port = os.getenv("SMTP_PORT")
 
 rabbitmq_config_user = {"host": local, "queue": queue_user_account}
 rabbitmq_config_project = {"host": local, "queue": queue_delete_project}
+broker_url = os.getenv("BROKER_URL")
