@@ -5,11 +5,11 @@ from flask_bcrypt import Bcrypt
 from jwt import encode
 
 from api.resource import GroupResource
-from config import secret_key, rabbitmq_config_user
+from config import secret_key
 from db.models import User
 from db.session import db_session
-from services.connect_rabbitmq import RabbitMQ
 from .schemas import LoginPayload, RegisterPayload
+from tasks import send_telegram, send_mail_register
 
 
 class Register(GroupResource):
@@ -33,9 +33,9 @@ class Register(GroupResource):
                         role_id=1)
         db_session.add(new_user)
         db_session.commit()
-        data = {"body": {'command_type': "send_mail_register", 'email': new_user.email, 'username': new_user.username},
-                "routing_key": "user-account"}
-        RabbitMQ(**rabbitmq_config_user).publish(**data)
+        data = {'email': new_user.email, 'username': new_user.username}
+        send_telegram.delay(f"Hello {new_user.email}, welcome to my app. (::")
+        send_mail_register.delay(data)
         return jsonify({"email": new_user.email,
                         "username": new_user.username}), 201
 
