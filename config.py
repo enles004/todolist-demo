@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 psql_url = os.getenv("PSQL_URL")
+result_backend = os.getenv("RESULT_BACKEND")
 
 
 class Config(object):
