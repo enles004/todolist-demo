@@ -1,9 +1,10 @@
 import requests
 from celery import Celery
 
+from config import result_backend
 from handlers.email import send_register_notify_email, send_delete_project_notify_email
 
-app = Celery('tasks', broker='pyamqp://guest@localhost//')
+app = Celery('tasks', broker='pyamqp://guest@localhost//', backend=result_backend)
 
 
 @app.task
@@ -21,3 +22,5 @@ def send_mail_register(data):
 @app.task
 def send_mail_delete(data):
     send_delete_project_notify_email(data)
+
+
