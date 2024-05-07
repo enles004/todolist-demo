@@ -20,7 +20,7 @@ class MailEnv:
         return body
 
 
-def send_register_notify_email(message):
+async def send_register_notify_email(message):
     subject = "Registration"
     templates = "mail_template"
     filename = "register_notify.html"
@@ -29,7 +29,7 @@ def send_register_notify_email(message):
     MailSender(**smtp_config).send_mail(body=body, subject=subject, email_to=message["email"])
 
 
-def send_delete_project_notify_email(message):
+async def send_delete_project_notify_email(message):
     subjects = "Project Deleted"
     templates = "mail_template"
     filename = "projects_delete.html"

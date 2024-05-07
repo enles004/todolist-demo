@@ -1,28 +1,27 @@
 from datetime import datetime
 
+from bson.objectid import ObjectId
 from flask import jsonify
 
 from api.resource import GroupResource, ItemResource
-from app import cache
-from db.models import Project, Task
-from db.session import db_session
-from handlers.params import filtering, sorting
-from .middleware import check_permissions, g, jwt_required
-from .schemas import TaskPayload, ParamTask
+from db.session import projects, tasks
+from handlers.params import filtering
+from .middleware import jwt_required, g, check_permissions
+from api.schema.schema_task import TaskPayload, ParamTask, FiltrationTask
 
 
 class TasksGroup(GroupResource):
 
-    def _schema_params(self):
+    async def _schema_params(self):
         return ParamTask()
 
-    def _schema(self):
+    async def _schema(self):
         return TaskPayload()
 
     @jwt_required
     @check_permissions(["write"])
-    def post(self, payload, path_params, query_params):
-        project = db_session.query(Project).filter_by(user_id=g.user_id, id=path_params["id"]).first()
+    async def post(self, payload, path_params, query_params):
+        project = projects.find_one({"user_id": g.user_id, "_id": path_params["id"]})
         if not project:
             return jsonify({"message": "no project"}), 404
         try:
@@ -30,20 +29,24 @@ class TasksGroup(GroupResource):
         except KeyError:
             now = datetime.now()
             date = datetime(now.year, now.month, now.day + 1)
-        new_task = Task(project_id=path_params["id"],
-                        title=payload['title'],
-                        name=payload['name'],
-                        expiry=date)
+        new_task = {"_id": str(ObjectId()),
+                    "project_id": path_params["id"],
+                    "title": payload['title'],
+                    "name": payload['name'],
+                    "expiry": date,
+                    "action": False,
+                    "date_complete": None,
+                    "created": datetime.now()}
 
-        db_session.add(new_task)
-        db_session.commit()
-        return jsonify(self._schema_params().dump(new_task)), 201
+        tasks.insert_one(new_task)
+        schema = FiltrationTask()
+        data = schema.dump(new_task)
+        return jsonify(data), 201
 
     @jwt_required
     @check_permissions(["read"])
-    def get(self, payload, path_params, query_params):
-        project = db_session.query(Project).filter_by(user_id=g.user_id, id=path_params["id"]).first()
-        query = db_session.query(Task)
+    async def get(self, payload, path_params, query_params):
+        project = projects.find_one({"user_id": g.user_id, "_id": path_params["id"]})
         if not project:
             return jsonify({"message": "no project"}), 404
         if query_params:
@@ -53,82 +56,76 @@ class TasksGroup(GroupResource):
             offset = (page - 1) * per_page
 
             # Filtering
-            query = query.filter_by(project_id=project.id)
+            fil = {"project_id": project["_id"]}
             if "filter" in query_params:
                 filter_params = query_params["filter"]
-                filtering(query=query, model=Task, data_filter_params=filter_params)
+                fil.update(filtering(data_filter_params=filter_params))
 
             # Sorting
             sort_params = query_params["sort"]
-            try:
-                query = sorting(query=query, data_sort_params=sort_params, model=Task)
-            except AttributeError:
-                return jsonify({"message": "invalid input attribute '{}'".format(sort_params["sort_by"])}), 400
+            query = tasks
+            if sort_params["order"] == "asc":
+                query = tasks.find(fil).sort(sort_params["sort_by"], 1).skip(offset).limit(per_page)
+            elif sort_params["order"] == "desc":
+                query = tasks.find(fil).sort(sort_params["sort_by"], -1).skip(offset).limit(per_page)
 
             # Result
-            total = query.count()
-            products = query.offset(offset).limit(per_page).all()
-            return {"data": [{"title": data.title, "name": data.name, "created": data.created, "id": data.id,
-                              "date_completed": data.date_completed, "action": data.action} for data in products],
+            result = list(query)
+            total = len(result)
+            return {"data": [
+                {"title": data["title"], "name": data["name"], "created": data["created"], "id": str(data["_id"]),
+                 "date_completed": data["date_complete"], "action": data["action"]} for data in result],
                     "meta": [{"page": page, "per_page": per_page, "total": total}]}, 200
 
 
 class TaskItem(ItemResource):
 
-    def _schema(self):
+    async def _schema(self):
         return ParamTask()
 
-    def _schema_params(self):
+    async def _schema_params(self):
         return TaskPayload()
 
     @jwt_required
     @check_permissions(["read"])
-    @cache.cached(timeout=20, key_prefix="task-id")
-    def get(self, payload, path_params, query_params):
-        project = db_session.query(Project).filter_by(user_id=g.user_id, id=path_params["id"]).first()
+    # @cache.cached(timeout=20, key_prefix="task-id")
+    async def get(self, payload, path_params, query_params):
+        project = projects.find_one({"user_id": g.user_id, "_id": path_params["id"]})
         if not project:
             return jsonify({"message": "no project"}), 404
-        if query_params:
-            query_params["project_id"] = project.id
-            task = db_session.query(Task).filter_by(**query_params).all()
-            task_dump = ParamTask(many=True)
-            data = task_dump.dump(task)
-            return data, 200
-        task = db_session.query(Task).filter_by(project_id=project.id, id=path_params["item_id"]).first()
+        task = tasks.find_one({"project_id": project["_id"], "_id": path_params["item_id"]})
         if not task:
             return jsonify({"message": "no task"}), 404
-        task_dump = ParamTask()
+        task_dump = FiltrationTask()
         data = task_dump.dump(task)
         return {"data": data}, 200
 
     @jwt_required
     @check_permissions(["write"])
-    def put(self, payload, path_params, query_params):
-        project = db_session.query(Project).filter_by(user_id=g.user_id, id=path_params["id"]).first()
+    async def put(self, payload, path_params, query_params):
+        project = projects.find_one({"user_id": g.user_id, "_id": path_params["id"]})
         if not project:
             return jsonify({"message": "no project"}), 404
-        task = db_session.query(Task).get(path_params["item_id"])
+        task = tasks.find_one({"_id": path_params["item_id"]})
         if not task:
             return jsonify({"message": "no task"}), 404
-        task.action_task = True
-        task.date_completed = datetime.now()
-        db_session.commit()
-        if task.action_task:
-            task_dump = ParamTask()
+        update = {"$set": {"action": True, "date_complete": datetime.now()}}
+        updated = task.update_one({"_id": path_params["item_id"]}, update)
+        if updated.raw_result["updatedExisting"]:
+            task_dump = FiltrationTask()
             return jsonify(task_dump.dump(task)), 201
         return jsonify({"message": "error"}), 400
 
     @jwt_required
     @check_permissions(["write"])
-    def delete(self, payload, path_params, query_params):
-        project = db_session.query(Project).filter_by(user_id=g.user_id, id=path_params["id"]).first()
+    async def delete(self, payload, path_params, query_params):
+        project = projects.find_one({"user_id": g.user_id, "_id": path_params["id"]})
 
         if not project:
             return jsonify({"message": "no project"}), 404
 
-        task = db_session.query(Task).get(path_params["item_id"])
+        task = tasks.find_one({"project_id": path_params["item_id"]})
         if not task:
             return jsonify({"message": "no task"}), 404
-        db_session.delete(path_params["item_id"])
-        db_session.commit()
+        task.delete_one({"project_id": path_params["item_id"]})
         return jsonify({"message": "deleted"}), 200

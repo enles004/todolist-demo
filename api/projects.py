@@ -1,114 +1,109 @@
 from datetime import datetime
 
+from bson.objectid import ObjectId
 from flask import jsonify
 
 from api.resource import GroupResource, ItemResource
-from app import cache
-from db.models import Project, Task
-from db.session import db_session
-from handlers.params import filtering, sorting
-from .middleware import check_permissions, g, jwt_required
-from .schemas import ProjectPayload, ParamProject
+from db.session import projects, tasks
+from handlers.params import filtering
 from tasks import send_mail_delete
+from .middleware import check_permissions, g, jwt_required
+from api.schema.schema_project import ProjectPayload, ParamProject
+
 
 class ProjectGroup(GroupResource):
 
-    def _schema_params(self):
+    async def _schema_params(self):
         return ParamProject()
 
-    def _schema(self):
+    async def _schema(self):
         return ProjectPayload()
 
     @jwt_required
     @check_permissions(["write"])
-    def post(self, payload, path_params, query_params):
-        new_project = Project(user_id=g.user_id, name=payload["name"])
-        db_session.add(new_project)
-        db_session.commit()
-        data = self._schema().dump(new_project)
+    async def post(self, payload, path_params, query_params):
+        new_project = {"_id": str(ObjectId()), "user_id": g.user_id, "name": payload["name"], "action": False, "created": datetime.now()}
+        projects.insert_one(new_project)
+        schema = await self._schema()
+        data = schema.dump(new_project)
         return data, 201
 
     @jwt_required
     @check_permissions(["read"])
     # @cache.cached(timeout=20, key_prefix="projects-list")
-    def get(self, payload, path_params, query_params):
-        query = db_session.query(Project)
+    async def get(self, payload, path_params, query_params):
+        filters = {"user_id": g.user_id}
         # Pagination
         page = query_params["pagination"]["page"]
         per_page = query_params["pagination"]["per_page"]
         offset = (page - 1) * per_page
 
         # Filtering
-        query = query.filter_by(user_id=g.user_id)
         if "filter" in query_params:
             filter_params = query_params["filter"]
-            query = filtering(query=query, data_filter_params=filter_params, model=Project)
+            filters.update(filtering(data_filter_params=filter_params))
 
         # Sorting
         sort_params = query_params["sort"]
-        try:
-            query = sorting(query=query, data_sort_params=sort_params, model=Project)
-        except AttributeError:
-            return jsonify({"message": "invalid input attribute '{}'".format(sort_params["sort_by"])}), 400
+        query = projects
+        if sort_params["order"] == "asc":
+            query = projects.find(filters).sort(sort_params["sort_by"], 1).skip(offset).limit(per_page)
+        elif sort_params["order"] == "desc":
+            query = projects.find(filters).sort(sort_params["sort_by"], -1).skip(offset).limit(per_page)
 
         # Result
-        total = query.count()
-        products = query.offset(offset).limit(per_page).all()
-        return {"data": [{"name": data.name, "id": data.id, "completed": data.completed} for data in products],
+        result = list(query)
+        total = len(list(projects.find(filters).sort(sort_params["sort_by"], -1)))
+        return {"data": [{"name": data["name"], "_id": data["_id"], "action": data["action"]} for data in result],
                 "meta": [{"page": page, "per_page": per_page, "total": total}]}, 200
 
 
 class ProjectItem(ItemResource):
 
-    def _schema_params(self):
+    async def _schema_params(self):
         return ParamProject()
 
-    def _schema(self):
+    async def _schema(self):
         return ProjectPayload()
 
     @jwt_required
     @check_permissions(["read"])
-    @cache.cached(timeout=20, key_prefix="project-id")
-    def get(self, payload, path_params, query_params):
-        if query_params:
-            project_params = db_session.query(Project).filter_by(user_id=g.user_id,
-                                                                 id=path_params["id"],
-                                                                 name=query_params["name"]).all()
-            project_dump = ProjectPayload()
-            data = project_dump.dump(project_params)
-            return data, 200
-
-        project = db_session.query(Project).filter_by(user_id=g.user_id, id=path_params["id"]).first()
+    # @cache.cached(timeout=20, key_prefix="project-id")
+    async def get(self, payload, path_params, query_params):
+        project = projects.find_one({"user_id": g.user_id, "_id": path_params["id"]})
         if not project:
             return jsonify({"Message": "No project"}), 404
-        data = self._schema().dump(project)
+        schema = await self._schema()
+        data = schema.dump(project)
         return {"data": data}, 200
 
     @jwt_required
     @check_permissions(["write"])
-    def put(self, payload, path_params, query_params):
-        project = db_session.query(Project).filter_by(user_id=g.user_id, id=path_params["id"]).first()
+    async def put(self, payload, path_params, query_params):
+        project = projects.find_one({"user_id": g.user_id, "_id": path_params["id"]})
         if not project:
             return jsonify({"Message": "Invalid"}), 401
-        project.completed = True
-        db_session.commit()
-        if project.completed:
+        new_action = {"$set": {"action": True}}
+        update = projects.update_one({"user_id": g.user_id, "_id": path_params["id"]}, new_action)
+        if update.raw_result["updatedExisting"]:
+            after_project = project.find_one({"user_id": g.user_id, "_id": path_params["id"]})
             data = ProjectPayload()
-            return jsonify(data.dump(project)), 201
+            return jsonify(data.dump(after_project)), 201
         return jsonify({"message": "error"}), 400
 
     @jwt_required
     @check_permissions(["write"])
-    def delete(self, payload, path_params, query_params):
-        project = db_session.query(Project).filter_by(user_id=g.user_id, id=path_params["id"]).first()
+    async def delete(self, payload, path_params, query_params):
+        project = projects.find_one({"user_id": g.user_id, "_id": path_params["id"]})
         if not project:
             return jsonify({"message": "no project"}), 404
 
-        db_session.query(Task).filter(Task.project_id == path_params["id"]).delete()
-        db_session.delete(project)
+        task = tasks.find_one({"project_id": path_params["id"]})
+        if task:
+            tasks.delete_many({"project_id": path_params["id"]})
+        projects.delete_one({"user_id": g.user_id, "_id": path_params["id"]})
         now = datetime.now()
         time = datetime(now.year, now.month, now.day, now.hour, now.minute, now.second)
-        db_session.commit()
-        data = {"email": g.email, "username": g.username, "name": project.name, "deletion_date": str(time)}
+        data = {"email": g.email, "username": g.username, "name": project["name"], "deletion_date": str(time)}
         send_mail_delete.delay(data)
         return jsonify({"message": "deleted"}), 200

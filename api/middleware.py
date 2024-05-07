@@ -5,15 +5,14 @@ from functools import wraps
 from flask import request, jsonify, g
 from jwt import ExpiredSignatureError, InvalidTokenError, decode
 
-from db.models import User, Role_Per, Permission
-from db.session import db_session
+from db.session import users, role_per, permissions
 from db.session import r
 from config import secret_key
 
 
 def jwt_required(func):
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    async def wrapper(*args, **kwargs):
         token = request.headers.get("Authorization")
         try:
             credential = decode(token, secret_key, algorithms="HS2565")
@@ -24,7 +23,7 @@ def jwt_required(func):
         g.user_id = credential["user_id"]
         g.email = credential["email"]
         g.username = credential["username"]
-        return func(*args, **kwargs)
+        return await func(*args, **kwargs)
 
     return wrapper
 
@@ -36,11 +35,11 @@ def check_permissions(required_permission):
         def wrapper(*args, **kwargs):
             if not g.user_id:
                 return jsonify({"Message": "The user not logged in"})
-            role_user = db_session.query(User).filter_by(id=g.user_id).first()
-            user_permission = db_session.query(Role_Per).filter_by(role_id=role_user.role_id).all()
+            role_user = users.find_one({"_id": g.user_id})
+            user_permission = role_per.find({"role_name": role_user["role"]})
             permission = []
-            for user_per in user_permission:
-                permission.append((db_session.query(Permission).filter_by(id=user_per.per_id).first()).name)
+            for user_per in list(user_permission):
+                permission.append(permissions.find_one({"name": user_per["per_name"]})["name"])
 
             if not any(per in permission for per in required_permission):
                 return jsonify({"Message": "User does not have permissions"})
