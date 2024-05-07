@@ -1,13 +1,14 @@
-import redis
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, scoped_session
-
+from pymongo import MongoClient
+from redis import Redis
 import config
+client = MongoClient(config.mongo_url)
+db = client.todolist
 
-engine = create_engine(config.psql_url)
-db_session = scoped_session(sessionmaker(autocommit=False,
-                                         autoflush=False,
-                                         bind=engine))
+users = db.users
+projects = db.projects
+tasks = db.tasks
+roles = db.roles
+permissions = db.permissions
+role_per = db.role_per
 
-r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-
+r = Redis(host="localhost", port=6379, decode_responses=True)
